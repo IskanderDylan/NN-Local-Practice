@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mnist-train
+spec:
+  # A failed pod is retried, and because training resumes from the last
+  # checkpoint the retry does not start over.
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: train
+          image: my-nn:dev
+          # The image lives in the node's containerd store via
+          # `minikube image load`. Without this, Kubernetes tries Docker Hub
+          # and fails with ImagePullBackOff.
+          imagePullPolicy: Never
+          env:
+            - name: EPOCHS
+              value: "5"
+            - name: BATCH_SIZE
+              value: "128"
+            - name: LR
+              value: "1e-3"
+            # Match the CPU limit below. Left unset, torch spawns threads for
+            # all 12 visible cores, fights the cgroup quota and runs slower.
+            - name: TORCH_THREADS
+              value: "4"
+          resources:
+            requests:
+              cpu: "4"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+          volumeMounts:
+            - name: checkpoints
+              mountPath: /checkpoints
+      volumes:
+        - name: checkpoints
+          persistentVolumeClaim:
+            claimName: mnist-checkpoints

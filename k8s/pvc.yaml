@@ -1,0 +1,16 @@
+# Checkpoints outlive the pod. Delete a training pod mid-run and the
+# replacement mounts this same claim and resumes from latest.pt.
+#
+# minikube's default StorageClass (standard, backed by storage-provisioner)
+# binds this to a hostPath inside the node container. It survives pod
+# restarts and `minikube stop`, but not `minikube delete`.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mnist-checkpoints
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi

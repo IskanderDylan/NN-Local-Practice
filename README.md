@@ -1,8 +1,15 @@
 # local-nn
 
-A reproducible single-node Kubernetes cluster on macOS for training neural networks locally, built on minikube over Docker Desktop.
+A reproducible single-node Kubernetes cluster on macOS for training neural networks locally, built on minikube over Docker Desktop. Ships with an MNIST CNN that trains to 99% in 83 seconds, set up to demonstrate checkpointing, resume across pod deletion, and resource limits the scheduler can enforce.
 
-Start from a clean machine and follow this top to bottom. If minikube and Docker are already installed, skip to [Configure Docker Desktop](#2-configure-docker-desktop).
+Start from a clean machine and follow this top to bottom. If Docker and minikube are already installed and sized, the whole thing is:
+
+```bash
+make up      # create the cluster
+make train   # build, load, run MNIST, follow the logs
+```
+
+If minikube and Docker are already installed, skip to [Configure Docker Desktop](#2-configure-docker-desktop).
 
 ## Verified on
 
@@ -113,7 +120,7 @@ Save this command. `--extra-config` lives in the profile rather than in `~/.mini
 
 Without the flag, on a 20 GB VM:
 
-| | CPU | Memory |
+|  | CPU | Memory |
 |---|---|---|
 | Requested at start | 12 | 18.00 GiB |
 | Container cgroup limit | 12 | 18.00 GiB |
@@ -123,7 +130,7 @@ The scheduler hands out memory up to 23.44 GiB while the kernel kills the contai
 
 With `system-reserved=memory=6Gi,cpu=2`:
 
-| | CPU | Memory |
+|  | CPU | Memory |
 |---|---|---|
 | Node capacity | 14 | 23.44 GiB |
 | Allocatable | 12 | 17.43 GiB |
@@ -149,30 +156,129 @@ docker inspect nn-train --format '{{.HostConfig.Memory}}'
 
 The first prints KiB, the second bytes. The first value has to be smaller. At the sizes above you get 18277916Ki (17.43 GiB) against 19327352832 bytes (18.00 GiB).
 
-## 6. Build and load images
+## 6. Run the MNIST workload
 
-This cluster runs containerd, so `eval $(minikube docker-env)` does not apply. No dockerd runs inside the node. Build with your local Docker and push the result into the cluster:
+Once the cluster is `Ready`:
+
+```bash
+make train
+```
+
+That builds the image, loads it into the cluster, creates the PVC, starts the Job and follows it to completion. Expect this on the reference machine:
+
+```
+[21:56:46] torch 2.8.0+cpu, 4 threads
+[21:56:46] no checkpoint, starting fresh
+[21:56:59] epoch 1/5 done in 13.1s  loss 0.2046  test accuracy 98.28%  checkpointed
+[21:57:11] epoch 2/5 done in 12.4s  loss 0.0650  test accuracy 98.61%  checkpointed
+[21:57:24] epoch 3/5 done in 12.4s  loss 0.0445  test accuracy 99.03%  checkpointed
+[21:57:36] epoch 4/5 done in 12.4s  loss 0.0358  test accuracy 99.09%  checkpointed
+[21:57:48] epoch 5/5 done in 12.5s  loss 0.0307  test accuracy 99.06%  checkpointed
+[21:57:48] training complete
+```
+
+Around 12.5 seconds per epoch on 4 CPU cores, 83 seconds for the Job. The model is a two-block CNN with roughly 1.2M parameters, which reaches 99% on MNIST and asks nothing of the machine.
+
+Run more epochs with `make train EPOCHS=10`. Wipe the checkpoint and start over with `make reset`.
+
+### Make targets
+
+| Target | What it does |
+|---|---|
+| `make up` | Create the cluster, or resume it if it exists |
+| `make down` | Stop the cluster, keeping checkpoints |
+| `make destroy` | Delete the cluster and everything in it |
+| `make status` | Print allocatable against the cgroup ceiling |
+| `make build` | Build the image on the host |
+| `make load` | Build, then push into the cluster's containerd store |
+| `make deploy` | Create the PVC and start the Job |
+| `make train` | load + deploy + watch |
+| `make logs` | Follow the training pod |
+| `make clean` | Delete the Job, keep checkpoints |
+| `make reset` | Delete the Job and the PVC, forcing a fresh run |
+
+`make up` prints the full `minikube start` command before running it, so the `--extra-config` flag stays visible rather than hiding behind the target.
+
+### Layout
+
+```
+Dockerfile        python:3.12-slim, torch 2.8.0 CPU, dataset baked in
+Makefile          cluster lifecycle and training targets
+src/train.py      CNN, training loop, checkpoint and resume
+k8s/pvc.yaml      2Gi claim that outlives the pod
+k8s/job.yaml      the training Job, resource limits and thread count
+```
+
+## 7. How images reach the cluster
+
+This cluster runs containerd, so `eval $(minikube docker-env)` does not apply. No dockerd runs inside the node. Build with your local Docker and push the result in:
 
 ```bash
 docker build -t my-nn:dev .
 minikube image load my-nn:dev
 ```
 
-Set `imagePullPolicy: Never` in the pod spec so Kubernetes uses the loaded image instead of reaching for a registry:
+`k8s/job.yaml` sets `imagePullPolicy: Never` so Kubernetes uses the loaded image instead of reaching for Docker Hub. Drop that line and you get `ImagePullBackOff`, because `my-nn:dev` exists nowhere but your machine.
 
-```yaml
-spec:
-  containers:
-    - name: train
-      image: my-nn:dev
-      imagePullPolicy: Never
+Check what the cluster holds with `minikube image ls`.
+
+Loading a 1.19 GB image takes a few seconds, which is slower than the docker runtime's zero-copy `docker-env` trick. In exchange you get the runtime production clusters actually run, so manifests that work here keep working when you move off your laptop.
+
+## 8. Where the dataset lives
+
+The Dockerfile downloads MNIST at build time and bakes it into the image:
+
+```dockerfile
+RUN python -c "from torchvision import datasets; \
+    datasets.MNIST('/data', train=True, download=True); \
+    datasets.MNIST('/data', train=False, download=True)"
 ```
 
-List what the cluster holds with `minikube image ls`.
+`src/train.py` then loads it with `download=False`, so a pod that somehow starts without the data fails loudly instead of quietly reaching for the network.
 
-containerd costs you a slower image loop than the docker runtime would, and buys you a runtime that matches what production clusters run, so manifests that work here keep working when you move off your laptop.
+Three reasons this beats making each person fetch the files by hand:
 
-## 7. Teardown and recreate
+- The build runs on your host, where the network works. A pod may have no egress at all, and debugging that teaches you nothing about Kubernetes.
+- MNIST is 11 MB compressed. It adds nothing meaningful to a 1.19 GB image.
+- A baked dataset makes the image self-contained, so `minikube image load` is the only transfer step and a run is reproducible from the image digest alone.
+
+Manual download earns its place once the data outgrows the image. At that point the pattern changes: an `initContainer` fetches the dataset onto a shared PVC, the training container waits for it, and many Jobs reuse one copy. Worth building when you move to CIFAR-10 or larger. For MNIST it is friction without a lesson.
+
+## 9. Exercises
+
+The manifests are set up so these fail in instructive ways.
+
+**Resume from a checkpoint.** Run five epochs, then ask for eight:
+
+```bash
+make train EPOCHS=5
+make clean
+make train EPOCHS=8
+```
+
+The second run prints `resumed from epoch 5 (accuracy 99.06%)` and trains only 6 through 8. The PVC survived the Job deletion.
+
+**Kill a pod mid-epoch.** Start a long run, then delete the pod while it works:
+
+```bash
+make train EPOCHS=20 &
+kubectl delete pod -l job-name=mnist-train
+```
+
+`backoffLimit: 3` gives the Job a new pod, which mounts the same claim and restarts from the last completed epoch. `train.py` writes checkpoints atomically through a temp file and rename, so a kill during a write cannot leave a corrupt file.
+
+**Ask for more than the node has.** Raise the memory request past allocatable:
+
+```bash
+kubectl patch job mnist-train --type=json \
+  -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/memory","value":"20Gi"}]'
+```
+
+The pod stays `Pending` with `Insufficient memory`. Without `system-reserved` the scheduler would have admitted it against the VM's 23.44 GiB and let the kernel kill the node instead.
+
+**Change the thread count.** `TORCH_THREADS` in `k8s/job.yaml` is set to 4 to match the CPU limit. Set it to 12 while leaving `limits.cpu` at 4 and the epoch time gets worse, because torch spawns 12 threads that fight over a quota of 4 cores.
+
+## 10. Teardown and recreate
 
 ```bash
 minikube stop -p nn-train     # keep the cluster, free the memory
