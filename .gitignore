@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Training artifacts
+data/
+datasets/
+checkpoints/
+runs/
+wandb/
+*.pt
+*.pth
+*.onnx
+*.ckpt
+
+# macOS
+.DS_Store
+
+# Local overrides
+.env
+*.local.yaml
