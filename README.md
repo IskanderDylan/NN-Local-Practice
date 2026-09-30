@@ -236,13 +236,7 @@ RUN python -c "from torchvision import datasets; \
 
 `src/train.py` then loads it with `download=False`, so a pod that somehow starts without the data fails loudly instead of quietly reaching for the network.
 
-Three reasons this beats making each person fetch the files by hand:
-
-- The build runs on your host, where the network works. A pod may have no egress at all, and debugging that teaches you nothing about Kubernetes.
-- MNIST is 11 MB compressed. It adds nothing meaningful to a 1.19 GB image.
-- A baked dataset makes the image self-contained, so `minikube image load` is the only transfer step and a run is reproducible from the image digest alone.
-
-Manual download earns its place once the data outgrows the image. At that point the pattern changes: an `initContainer` fetches the dataset onto a shared PVC, the training container waits for it, and many Jobs reuse one copy. Worth building when you move to CIFAR-10 or larger. For MNIST it is friction without a lesson.
+Once the data outgrows the image, switch to an `initContainer` that fetches the dataset onto a shared PVC while the training container waits, so many Jobs reuse one copy.
 
 ## 9. Exercises
 
