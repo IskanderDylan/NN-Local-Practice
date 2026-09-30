@@ -13,16 +13,16 @@ If minikube and Docker are already installed, skip to [Configure Docker Desktop]
 
 ## Verified on
 
-| Component | Version |
-|---|---|
-| macOS | Darwin 26.6.2 (arm64) |
-| Hardware | Apple M5 Max, 18 cores, 36 GB RAM |
-| Homebrew | 7.0.7 |
-| Docker Desktop | 29.8.1 |
-| minikube | v1.39.0 |
-| kubectl | v1.37.1 |
-| Kubernetes | v1.37.0 |
-| Container runtime | containerd 2.3.4 |
+| Component         | Version                           |
+|-------------------|-----------------------------------|
+| macOS             | Darwin 26.6.2 (arm64)             |
+| Hardware          | Apple M5 Max, 18 cores, 36 GB RAM |
+| Homebrew          | 7.0.7                             |
+| Docker Desktop    | 29.8.1                            |
+| minikube          | v1.39.0                           |
+| kubectl           | v1.37.1                           |
+| Kubernetes        | v1.37.0                           |
+| Container runtime | containerd 2.3.4                  |
 
 The sizing numbers below assume 36 GB of RAM. See [Sizing for your machine](#sizing-for-your-machine) to scale them.
 
@@ -62,11 +62,11 @@ minikube runs as a container inside Docker Desktop's Linux VM, so the VM's memor
 
 Open Docker Desktop, go to **Settings > Resources**, and set:
 
-| Setting | Value | Why |
-|---|---|---|
-| Memory | 20 GB | Leaves 16 GB for macOS |
-| CPUs | 14 | Leaves 4 cores for the host |
-| Swap | 2 GB | Default is fine |
+| Setting         | Value  | Why                                         |
+|-----------------|--------|---------------------------------------------|
+| Memory          | 20 GB  | Leaves 16 GB for macOS                      |
+| CPUs            | 14     | Leaves 4 cores for the host                 |
+| Swap            | 2 GB   | Default is fine                             |
 | Disk image size | 100 GB | ML images run 2 to 6 GB each and accumulate |
 
 Click **Apply & Restart** and wait for Docker to come back. Verify the VM picked up the change:
@@ -120,21 +120,21 @@ Save this command. `--extra-config` lives in the profile rather than in `~/.mini
 
 Without the flag, on a 20 GB VM:
 
-|  | CPU | Memory |
-|---|---|---|
-| Requested at start | 12 | 18.00 GiB |
-| Container cgroup limit | 12 | 18.00 GiB |
-| Reported as allocatable | 14 | 23.44 GiB |
+|                         | CPU | Memory    |
+|-------------------------|-----|-----------|
+| Requested at start      | 12  | 18.00 GiB |
+| Container cgroup limit  | 12  | 18.00 GiB |
+| Reported as allocatable | 14  | 23.44 GiB |
 
 The scheduler hands out memory up to 23.44 GiB while the kernel kills the container at 18. That kill lands on the container, not the pod, so kubelet, etcd and the API server die together and the cluster drops mid-run.
 
 With `system-reserved=memory=6Gi,cpu=2`:
 
-|  | CPU | Memory |
-|---|---|---|
-| Node capacity | 14 | 23.44 GiB |
-| Allocatable | 12 | 17.43 GiB |
-| Container cgroup limit | 12 | 18.00 GiB |
+|                        | CPU | Memory    |
+|------------------------|-----|-----------|
+| Node capacity          | 14  | 23.44 GiB |
+| Allocatable            | 12  | 17.43 GiB |
+| Container cgroup limit | 12  | 18.00 GiB |
 
 Allocatable now sits below the cgroup ceiling with room to spare. A pod that will not fit gets rejected at scheduling time.
 
@@ -183,19 +183,19 @@ Run more epochs with `make train EPOCHS=10`. Wipe the checkpoint and start over 
 
 ### Make targets
 
-| Target | What it does |
-|---|---|
-| `make up` | Create the cluster, or resume it if it exists |
-| `make down` | Stop the cluster, keeping checkpoints |
-| `make destroy` | Delete the cluster and everything in it |
-| `make status` | Print allocatable against the cgroup ceiling |
-| `make build` | Build the image on the host |
-| `make load` | Build, then push into the cluster's containerd store |
-| `make deploy` | Create the PVC and start the Job |
-| `make train` | load + deploy + watch |
-| `make logs` | Follow the training pod |
-| `make clean` | Delete the Job, keep checkpoints |
-| `make reset` | Delete the Job and the PVC, forcing a fresh run |
+| Target         | What it does                                         |
+|----------------|------------------------------------------------------|
+| `make up`      | Create the cluster, or resume it if it exists        |
+| `make down`    | Stop the cluster, keeping checkpoints                |
+| `make destroy` | Delete the cluster and everything in it              |
+| `make status`  | Print allocatable against the cgroup ceiling         |
+| `make build`   | Build the image on the host                          |
+| `make load`    | Build, then push into the cluster's containerd store |
+| `make deploy`  | Create the PVC and start the Job                     |
+| `make train`   | load + deploy + watch                                |
+| `make logs`    | Follow the training pod                              |
+| `make clean`   | Delete the Job, keep checkpoints                     |
+| `make reset`   | Delete the Job and the PVC, forcing a fresh run      |
 
 `make up` prints the full `minikube start` command before running it, so the `--extra-config` flag stays visible rather than hiding behind the target.
 
@@ -289,11 +289,11 @@ Recreating means running the full command from [Start the cluster](#4-start-the-
 Give macOS at least 14 to 16 GB and leave 4 cores outside Docker. From there:
 
 | Host RAM | Docker Desktop | `--memory` | `--cpus` | `system-reserved` |
-|---|---|---|---|---|
-| 16 GB | 10 GB | 8g | 4 | memory=3Gi,cpu=1 |
-| 24 GB | 14 GB | 12g | 6 | memory=4Gi,cpu=1 |
-| 36 GB | 20 GB | 18g | 12 | memory=6Gi,cpu=2 |
-| 64 GB | 40 GB | 36g | 16 | memory=10Gi,cpu=2 |
+|----------|----------------|------------|----------|-------------------|
+| 16 GB    | 10 GB          | 8g         | 4        | memory=3Gi,cpu=1  |
+| 24 GB    | 14 GB          | 12g        | 6        | memory=4Gi,cpu=1  |
+| 36 GB    | 20 GB          | 18g        | 12       | memory=6Gi,cpu=2  |
+| 64 GB    | 40 GB          | 36g        | 16       | memory=10Gi,cpu=2 |
 
 Two rules generate the whole table. Keep `--memory` a few GB under the Docker Desktop allocation so the VM has room for its own overhead. Size `system-reserved` memory so that (Docker Desktop total) minus (reserved) lands under `--memory`, which is what keeps allocatable below the cgroup ceiling.
 
