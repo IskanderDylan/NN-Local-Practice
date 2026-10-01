@@ -11,7 +11,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: train
-          image: my-nn:dev
+          image: mnist-nn:dev
           # The image lives in the node's containerd store via
           # `minikube image load`. Without this, Kubernetes tries Docker Hub
           # and fails with ImagePullBackOff.

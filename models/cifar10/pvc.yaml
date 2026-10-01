@@ -1,0 +1,12 @@
+# Separate claim from the MNIST workload, so checkpoints never collide and
+# `make reset MODEL=cifar10` leaves the MNIST run alone.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cifar10-checkpoints
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 4Gi

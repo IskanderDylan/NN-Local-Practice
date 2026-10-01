@@ -1,12 +1,13 @@
 # local-nn
 
-A reproducible single-node Kubernetes cluster on macOS for training neural networks locally, built on minikube over Docker Desktop. Ships with an MNIST CNN that trains to 99% in 83 seconds, set up to demonstrate checkpointing, resume across pod deletion, and resource limits the scheduler can enforce.
+A reproducible single-node Kubernetes cluster on macOS for training neural networks locally, built on minikube over Docker Desktop. Ships with two workloads, an MNIST CNN that trains to 99% in 83 seconds and a CIFAR-10 ResNet-9 that runs long enough to matter, both set up to demonstrate checkpointing, resume across pod deletion, and resource limits the scheduler can enforce.
 
 Start from a clean machine and follow this top to bottom. If Docker and minikube are already installed and sized, the whole thing is:
 
 ```bash
 make up      # create the cluster
 make train   # build, load, run MNIST, follow the logs
+             # or: make train MODEL=cifar10
 ```
 
 If minikube and Docker are already installed, skip to [Configure Docker Desktop](#2-configure-docker-desktop).
@@ -156,7 +157,20 @@ docker inspect nn-train --format '{{.HostConfig.Memory}}'
 
 The first prints KiB, the second bytes. The first value has to be smaller. At the sizes above you get 18277916Ki (17.43 GiB) against 19327352832 bytes (18.00 GiB).
 
-## 6. Run the MNIST workload
+## 6. Run a workload
+
+Two are included. Pick one with `MODEL=`, and `make models` lists them.
+
+| Model     | Architecture           | Cores | Per epoch | Result               |
+|-----------|------------------------|-------|-----------|----------------------|
+| `mnist`   | CNN, ~1.2M params      | 4     | ~12.5s    | 99.1% after 5 epochs |
+| `cifar10` | ResNet-9, ~6.6M params | 8     | ~4.8 min  | 68.1% after 1 epoch  |
+
+Start with `mnist`. It finishes in under two minutes, which makes it the right thing to break while learning what the manifests do. Move to `cifar10` once the plumbing is boring: at roughly 48 minutes for the default 10 epochs, it is long enough that checkpoint and resume stop being a demo.
+
+Both share the same contract, so anything you learn on one transfers: one checkpoint per epoch onto a PVC, resume from the newest on start, a `TORCH_THREADS` setting matched to the CPU limit, and a separate claim per model so their checkpoints never collide.
+
+### mnist
 
 Once the cluster is `Ready`:
 
@@ -181,6 +195,32 @@ Around 12.5 seconds per epoch on 4 CPU cores, 83 seconds for the Job. The model 
 
 Run more epochs with `make train EPOCHS=10`. Wipe the checkpoint and start over with `make reset`.
 
+### cifar10
+
+```bash
+make train MODEL=cifar10
+```
+
+```
+[22:22:07] torch 2.8.0+cpu, 8 threads
+[22:22:08] no checkpoint, starting fresh
+[22:26:55] epoch 1/1 done in 287.2s  loss 1.7118  test accuracy 68.09%  checkpointed
+```
+
+Around 4.8 minutes per epoch on 8 cores, so the default 10 epochs takes roughly 48 minutes of machine time. ResNet-9 is the DAWNBench speedrun architecture, which reaches about 90% on CIFAR-10 given the full schedule.
+
+Watch out for your Mac sleeping. A run left alone measured 5815 seconds for an epoch that takes 287 seconds awake, because macOS entered Idle Sleep partway through and cycled between sleep and darkwake for the rest. The pod survives it and the checkpoint stays valid, so nothing is lost, but wall-clock numbers become meaningless. `make watch` wraps its wait in `caffeinate -i` to hold off idle sleep. Running `kubectl` directly leaves you unprotected, so use `caffeinate -i` yourself for anything long.
+
+The learning rate follows a OneCycle schedule tied to the epoch budget. Resuming with a different `EPOCHS` rebuilds that schedule and fast-forwards it, rather than restoring one built for a different length and stepping it off the end. The log says so when it happens.
+
+Every `make` target takes `MODEL=`:
+
+```bash
+make train MODEL=cifar10 EPOCHS=20
+make logs  MODEL=cifar10
+make reset MODEL=cifar10          # wipes cifar10 checkpoints, leaves mnist alone
+```
+
 ### Make targets
 
 | Target         | What it does                                         |
@@ -193,6 +233,7 @@ Run more epochs with `make train EPOCHS=10`. Wipe the checkpoint and start over 
 | `make load`    | Build, then push into the cluster's containerd store |
 | `make deploy`  | Create the PVC and start the Job                     |
 | `make train`   | load + deploy + watch                                |
+| `make models`  | List available workloads                             |
 | `make logs`    | Follow the training pod                              |
 | `make clean`   | Delete the Job, keep checkpoints                     |
 | `make reset`   | Delete the Job and the PVC, forcing a fresh run      |
@@ -202,11 +243,18 @@ Run more epochs with `make train EPOCHS=10`. Wipe the checkpoint and start over 
 ### Layout
 
 ```
-Dockerfile        python:3.12-slim, torch 2.8.0 CPU, dataset baked in
-Makefile          cluster lifecycle and training targets
-src/train.py      CNN, training loop, checkpoint and resume
-k8s/pvc.yaml      2Gi claim that outlives the pod
-k8s/job.yaml      the training Job, resource limits and thread count
+Makefile              cluster lifecycle and training targets
+models/
+  mnist/
+    Dockerfile      python:3.12-slim, torch 2.8.0 CPU, MNIST baked in
+    train.py        CNN, training loop, checkpoint and resume
+    pvc.yaml        2Gi claim that outlives the pod
+    job.yaml        the Job, resource limits and thread count
+  cifar10/
+    Dockerfile      same base, CIFAR-10 baked in
+    train.py        ResNet-9, OneCycle schedule, checkpoint and resume
+    pvc.yaml        4Gi claim
+    job.yaml        8 cores, 8Gi limit
 ```
 
 ## 7. How images reach the cluster
@@ -214,11 +262,11 @@ k8s/job.yaml      the training Job, resource limits and thread count
 This cluster runs containerd, so `eval $(minikube docker-env)` does not apply. No dockerd runs inside the node. Build with your local Docker and push the result in:
 
 ```bash
-docker build -t my-nn:dev .
-minikube image load my-nn:dev
+docker build -t mnist-nn:dev models/mnist
+minikube image load mnist-nn:dev
 ```
 
-`k8s/job.yaml` sets `imagePullPolicy: Never` so Kubernetes uses the loaded image instead of reaching for Docker Hub. Drop that line and you get `ImagePullBackOff`, because `my-nn:dev` exists nowhere but your machine.
+`models/<model>/job.yaml` sets `imagePullPolicy: Never` so Kubernetes uses the loaded image instead of reaching for Docker Hub. Drop that line and you get `ImagePullBackOff`, because `mnist-nn:dev` exists nowhere but your machine.
 
 Check what the cluster holds with `minikube image ls`.
 
@@ -234,7 +282,7 @@ RUN python -c "from torchvision import datasets; \
     datasets.MNIST('/data', train=False, download=True)"
 ```
 
-`src/train.py` then loads it with `download=False`, so a pod that somehow starts without the data fails loudly instead of quietly reaching for the network.
+`train.py` then loads it with `download=False`, so a pod that somehow starts without the data fails loudly instead of quietly reaching for the network.
 
 Once the data outgrows the image, switch to an `initContainer` that fetches the dataset onto a shared PVC while the training container waits, so many Jobs reuse one copy.
 
@@ -270,7 +318,7 @@ kubectl patch job mnist-train --type=json \
 
 The pod stays `Pending` with `Insufficient memory`. Without `system-reserved` the scheduler would have admitted it against the VM's 23.44 GiB and let the kernel kill the node instead.
 
-**Change the thread count.** `TORCH_THREADS` in `k8s/job.yaml` is set to 4 to match the CPU limit. Set it to 12 while leaving `limits.cpu` at 4 and the epoch time gets worse, because torch spawns 12 threads that fight over a quota of 4 cores.
+**Change the thread count.** `TORCH_THREADS` in `models/mnist/job.yaml` is set to 4 to match the CPU limit. Set it to 12 while leaving `limits.cpu` at 4 and the epoch time gets worse, because torch spawns 12 threads that fight over a quota of 4 cores.
 
 ## 10. Teardown and recreate
 

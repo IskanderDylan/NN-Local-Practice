@@ -17,10 +17,10 @@ RUN python -c "from torchvision import datasets; \
     datasets.MNIST('/data', train=True, download=True); \
     datasets.MNIST('/data', train=False, download=True)"
 
-COPY src/ /app/src/
+COPY train.py /app/train.py
 
 ENV DATA_DIR=/data \
     CHECKPOINT_DIR=/checkpoints \
     PYTHONUNBUFFERED=1
 
-CMD ["python", "/app/src/train.py"]
+CMD ["python", "/app/train.py"]

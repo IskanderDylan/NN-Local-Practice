@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cifar10-train
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: train
+          image: cifar10-nn:dev
+          imagePullPolicy: Never
+          env:
+            - name: EPOCHS
+              value: "10"
+            - name: BATCH_SIZE
+              value: "256"
+            - name: LR
+              value: "2e-3"
+            # Matches limits.cpu below. ResNet-9 is heavier than the MNIST
+            # CNN, so this workload gets 8 of the node's 12 cores.
+            - name: TORCH_THREADS
+              value: "8"
+          resources:
+            requests:
+              cpu: "8"
+              memory: 4Gi
+            limits:
+              cpu: "8"
+              memory: 8Gi
+          volumeMounts:
+            - name: checkpoints
+              mountPath: /checkpoints
+      volumes:
+        - name: checkpoints
+          persistentVolumeClaim:
+            claimName: cifar10-checkpoints
