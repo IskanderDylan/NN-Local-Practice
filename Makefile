@@ -20,7 +20,7 @@ help:
 
 models: ## List available workloads
 	@echo "  \033[36mmnist\033[0m      CNN, ~1.2M params, 99% in ~85s on 4 cores"
-	@echo "  \033[36mcifar10\033[0m    ResNet-9, ~6.6M params, ~4.8 min/epoch on 8 cores"
+	@echo "  \033[36mcifar10\033[0m    ResNet-9, ~6.6M params, 90.8% in ~53 min on 8 cores"
 
 check:
 	@test -d $(DIR) || { echo "no such model '$(MODEL)'. try: make models"; exit 1; }
@@ -76,8 +76,9 @@ logs: ## Tail the training pod
 
 watch: ## Block until the Job finishes, then print the epoch summaries
 	@echo "waiting on $(JOB)..."
-	@# caffeinate -i holds off idle sleep. Without it a long run stalls when
-	@# the Mac sleeps: the pod keeps its state but stops getting CPU.
+	@# caffeinate -i holds off IDLE sleep only. It cannot stop a Low Power
+	@# Sleep from a draining battery or a clamshell sleep from shutting the
+	@# lid, so plug in for long runs. Checkpoints survive either way.
 	@caffeinate -i sh -c 'until kubectl get job $(JOB) -o jsonpath="{.status.succeeded}" 2>/dev/null | grep -q 1; do sleep 5; done'
 	@kubectl logs -l job-name=$(JOB) --tail=500 | grep -vE 'batch [0-9]+/'
 

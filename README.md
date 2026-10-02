@@ -161,12 +161,12 @@ The first prints KiB, the second bytes. The first value has to be smaller. At th
 
 Two are included. Pick one with `MODEL=`, and `make models` lists them.
 
-| Model     | Architecture           | Cores | Per epoch | Result               |
-|-----------|------------------------|-------|-----------|----------------------|
-| `mnist`   | CNN, ~1.2M params      | 4     | ~12.5s    | 99.1% after 5 epochs |
-| `cifar10` | ResNet-9, ~6.6M params | 8     | ~4.8 min  | 68.1% after 1 epoch  |
+| Model     | Architecture           | Cores | Per epoch | Result                |
+|-----------|------------------------|-------|-----------|-----------------------|
+| `mnist`   | CNN, ~1.2M params      | 4     | ~12.5s    | 99.1% after 5 epochs  |
+| `cifar10` | ResNet-9, ~6.6M params | 8     | ~5.25 min | 90.8% after 10 epochs |
 
-Start with `mnist`. It finishes in under two minutes, which makes it the right thing to break while learning what the manifests do. Move to `cifar10` once the plumbing is boring: at roughly 48 minutes for the default 10 epochs, it is long enough that checkpoint and resume stop being a demo.
+Start with `mnist`. It finishes in under two minutes, which makes it the right thing to break while learning what the manifests do. Move to `cifar10` once the plumbing is boring: at roughly 53 minutes for the default 10 epochs, it is long enough that checkpoint and resume stop being a demo.
 
 Both share the same contract, so anything you learn on one transfers: one checkpoint per epoch onto a PVC, resume from the newest on start, a `TORCH_THREADS` setting matched to the CPU limit, and a separate claim per model so their checkpoints never collide.
 
@@ -202,14 +202,25 @@ make train MODEL=cifar10
 ```
 
 ```
-[22:22:07] torch 2.8.0+cpu, 8 threads
-[22:22:08] no checkpoint, starting fresh
-[22:26:55] epoch 1/1 done in 287.2s  loss 1.7118  test accuracy 68.09%  checkpointed
+[00:25:21] torch 2.8.0+cpu, 8 threads
+[00:25:21] no checkpoint, starting fresh
+[00:30:07] epoch 1/10 done in 285.6s  loss 1.8728  test accuracy 55.42%  checkpointed
+[00:35:04] epoch 2/10 done in 296.8s  loss 1.3692  test accuracy 65.27%  checkpointed
+...
+[01:07:22] epoch 8/10 done in 345.8s  loss 0.7868  test accuracy 87.31%  checkpointed
+[01:17:56] epoch 9/10 done in 634.7s  loss 0.7291  test accuracy 90.07%  checkpointed
+[06:56:08] epoch 10/10 done in 20291.3s loss 0.6915 test accuracy 90.77%  checkpointed
 ```
 
-Around 4.8 minutes per epoch on 8 cores, so the default 10 epochs takes roughly 48 minutes of machine time. ResNet-9 is the DAWNBench speedrun architecture, which reaches about 90% on CIFAR-10 given the full schedule.
+Around 5.25 minutes per epoch on 8 cores, so the default 10 epochs takes roughly 53 minutes. ResNet-9 is the DAWNBench speedrun architecture, and the full schedule measured 90.77% on this machine.
 
-Watch out for your Mac sleeping. A run left alone measured 5815 seconds for an epoch that takes 287 seconds awake, because macOS entered Idle Sleep partway through and cycled between sleep and darkwake for the rest. The pod survives it and the checkpoint stays valid, so nothing is lost, but wall-clock numbers become meaningless. `make watch` wraps its wait in `caffeinate -i` to hold off idle sleep. Running `kubectl` directly leaves you unprotected, so use `caffeinate -i` yourself for anything long.
+Epoch times drift upward across a run, 286s to 346s over the first eight here, which is thermal throttling under sustained all-core load rather than a bug.
+
+**Plug the laptop in before a long run.** Look at epochs 9 and 10 above: 635s and 20291s, against 315s for the ones before them. The battery reached 1% and macOS forced a Low Power Sleep that lasted 5.5 hours.
+
+`make watch` wraps its wait in `caffeinate -i`, and that flag blocks *idle* sleep only. It cannot stop a Low Power Sleep from a draining battery, and it cannot stop a clamshell sleep when you shut the lid. Neither can any other caffeinate flag. Running on AC power is the only thing that actually protects a long run.
+
+What survived is the point. The checkpoint written at the end of epoch 9 stayed valid through 5.5 hours of forced sleep, the pod resumed on wake, and the run finished at the accuracy it should have. Wall-clock timings became meaningless; the training did not.
 
 The learning rate follows a OneCycle schedule tied to the epoch budget. Resuming with a different `EPOCHS` rebuilds that schedule and fast-forwards it, rather than restoring one built for a different length and stepping it off the end. The log says so when it happens.
 
